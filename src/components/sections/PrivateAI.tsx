@@ -1,4 +1,4 @@
-import { Container, SectionHeading } from "@/components/ui";
+import { Container } from "@/components/ui";
 import { Reveal } from "@/components/Reveal";
 import { HomeChipIcon, CheckIcon } from "@/components/icons";
 

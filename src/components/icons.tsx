@@ -1,19 +1,24 @@
 type IconProps = { className?: string };
 
-const wrap = (children: React.ReactNode) => (props: IconProps) => (
-  <svg
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={1.7}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-    className={props.className}
-    aria-hidden="true"
-  >
-    {children}
-  </svg>
-);
+const wrap = (children: React.ReactNode) => {
+  function Icon({ className }: IconProps) {
+    return (
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={1.7}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+        aria-hidden="true"
+      >
+        {children}
+      </svg>
+    );
+  }
+  return Icon;
+};
 
 export const MailIcon = wrap(
   <>

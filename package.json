@@ -1,11 +1,15 @@
 {
   "name": "gingermail-web",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "main": "server.mjs",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.mjs",
     "lint": "eslint"
   },
   "dependencies": {
