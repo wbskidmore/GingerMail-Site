@@ -1,0 +1,177 @@
+name: Release
+
+# Builds and publishes the GingerMail marketing site Docker image, then
+# attaches a loadable tarball to a GitHub Release.
+#
+# Trigger with a version tag:
+#   git tag v1.0.9 && git push origin v1.0.9
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Create a draft GitHub Release from this run"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  mode:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.resolve.outputs.publish }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve tag
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            publish=true
+            tag="${GITHUB_REF_NAME}"
+          else
+            publish="${{ github.event.inputs.publish_release }}"
+            tag="v${version}-dev.${{ github.run_number }}"
+          fi
+          publish="${publish:-false}"
+          {
+            echo "publish=$publish"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved -> publish=$publish tag=$tag"
+
+  docker:
+    name: Build Docker image
+    needs: mode
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Read version + image name
+        id: meta
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          if [ -z "$version" ] || [ "$version" = "undefined" ]; then
+            echo "::error::package.json version is empty; cannot tag Docker image"
+            exit 1
+          fi
+          release_tag="${{ needs.mode.outputs.tag }}"
+          if [ -z "$release_tag" ]; then
+            release_tag="v${version}"
+          fi
+          image="ghcr.io/$(echo '${{ github.repository_owner }}/gingermail-site' | tr '[:upper:]' '[:lower:]')"
+          {
+            echo "version=$version"
+            echo "release_tag=$release_tag"
+            echo "image=$image"
+          } >> "$GITHUB_OUTPUT"
+          echo "Docker tags -> ${image}:${version} ${image}:latest ${image}:${release_tag}"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
+            ${{ steps.meta.outputs.image }}:latest
+            ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.release_tag }}
+          labels: |
+            org.opencontainers.image.version=${{ steps.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (cosign keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Export image tarball + checksum
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p docker-dist
+          docker pull "${IMAGE}:${VERSION}"
+          docker save "${IMAGE}:${VERSION}" \
+            | gzip > "docker-dist/gingermail-site-${VERSION}-docker.tar.gz"
+          cd docker-dist
+          sha256sum ./*.tar.gz > SHA256SUMS
+
+      - name: Sign tarball (cosign blob, keyless)
+        run: |
+          set -euo pipefail
+          cd docker-dist
+          f=$(ls ./*.tar.gz)
+          cosign sign-blob --yes \
+            --output-signature "${f}.sig" \
+            --output-certificate "${f}.pem" \
+            "$f"
+
+      - name: Upload Docker artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gingermail-site-docker
+          if-no-files-found: error
+          path: docker-dist/*
+
+  release:
+    name: Publish GitHub Release
+    needs: [mode, docker]
+    runs-on: ubuntu-latest
+    if: >-
+      always()
+      && !cancelled()
+      && needs.mode.result == 'success'
+      && needs.docker.result == 'success'
+      && (startsWith(github.ref, 'refs/tags/') || needs.mode.outputs.publish == 'true')
+    steps:
+      - name: Download Docker artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: gingermail-site-docker
+          path: dist-artifacts
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.mode.outputs.tag }}
+          draft: true
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          name: ${{ needs.mode.outputs.tag }}
+          generate_release_notes: true
+          files: dist-artifacts/**/*
