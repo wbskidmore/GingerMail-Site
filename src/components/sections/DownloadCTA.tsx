@@ -3,8 +3,8 @@ import { Reveal } from "@/components/Reveal";
 
 // TODO: point these at real release artifacts once published.
 const downloads = [
-  { os: "macOS", note: "Apple silicon & Intel", href: "#" },
-  { os: "Windows", note: "10 & 11, 64-bit", href: "#" },
+  { os: "macOS", note: "Apple silicon & Intel", href: "https://github.com/wbskidmore/GingerMail/releases" },
+  { os: "Windows", note: "10 & 11, 64-bit", href: "https://github.com/wbskidmore/GingerMail/releases" },
 ];
 
 export function DownloadCTA() {
